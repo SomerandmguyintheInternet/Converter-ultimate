@@ -3,8 +3,11 @@
 #
 # This version introduces interactive table processing capabilities, including
 # a live column selector and a strict table extraction mode.
+# This revision adds multi-threading for CPU-bound batch operations and configurable resource allocation.
 #
 # Features:
+# - NEW: Added settings for max CPU threads and clarified memory chunk size.
+# - NEW: Multi-threading for batch processing (PDF conversion, general workflows) for improved performance.
 # - NEW: Interactive "Preview & Select Columns" tool for PDF and Word conversions.
 # - NEW: "Strict Table Extraction" option for cleaner, table-only output.
 # - Dual UI: Simple Mode for quick tasks & Advanced Mode for chained workflows.
@@ -38,7 +41,7 @@ import sqlite3
 import csv
 import time
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Optional, Set, Dict, Any, IO, Type
 from io import StringIO, BytesIO
 
@@ -128,11 +131,12 @@ os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
 
 class Job:
     """Represents a single unit of work for the processing queue."""
-    def __init__(self, job_id: str, source_files: List[str], workflow_steps: List['WorkflowStep'], output_dir: str):
+    def __init__(self, job_id: str, source_files: List[str], workflow_steps: List['WorkflowStep'], output_dir: str, settings: Optional[Dict[str, Any]] = None):
         self.job_id = job_id
         self.source_files = source_files
         self.workflow_steps = workflow_steps
         self.output_dir = output_dir
+        self.settings = settings if settings is not None else {}
         self.status = "queued"
         self.current_step_index = 0
         self.error_message: Optional[str] = None
@@ -555,13 +559,84 @@ class AppWorker(QObject):
         self.signals.log.emit("Worker thread has stopped."); self.signals.all_finished.emit()
         self.db_manager.log_audit_event("Worker.Stopped", "Worker thread has stopped.")
 
+    # --- Multi-threading Helper Methods ---
+
+    def _process_single_file_workflow(self, source_file: str, job: Job, main_temp_dir: str):
+        """Processes a single file through its entire workflow in a thread-safe manner."""
+        thread_temp_dir = tempfile.mkdtemp(dir=main_temp_dir)
+        try:
+            current_file = source_file
+            for step_idx, step in enumerate(job.workflow_steps):
+                self.signals.log.emit(f"    - [{os.path.basename(source_file)}] Step {step_idx+1}/{len(job.workflow_steps)}: <b>{step.name}</b>")
+                
+                # Merge job-level settings with step-specific config. Step config takes precedence.
+                effective_settings = job.settings.copy()
+                effective_settings.update(step.config)
+                effective_settings['ai_processor'] = self.ai_processor
+                
+                output_path = step.execute(current_file, thread_temp_dir, self.signals, effective_settings)
+                
+                if output_path != current_file and os.path.exists(output_path):
+                    current_file = output_path
+            
+            if os.path.dirname(current_file) == os.path.realpath(thread_temp_dir):
+                final_output_path = os.path.join(job.output_dir, os.path.basename(current_file))
+                shutil.move(current_file, final_output_path)
+                self.signals.log.emit(f"  - ✅ Finished {os.path.basename(source_file)}. Final output: {os.path.basename(final_output_path)}")
+            else:
+                self.signals.log.emit(f"  - ✅ Finished {os.path.basename(source_file)}. No new file created.")
+        except Exception as e:
+            raise RuntimeError(f"Failed on file '{os.path.basename(source_file)}'") from e
+        finally:
+            shutil.rmtree(thread_temp_dir)
+
+    def _process_single_pdf(self, path: str, flavor: str, selected_columns: Optional[List[str]]) -> Optional[pd.DataFrame]:
+        """Reads tables from a single PDF, cleans them, and returns a combined DataFrame for that file."""
+        try:
+            self.signals.log.emit(f"  - Reading tables from {os.path.basename(path)}...")
+            tables = camelot.read_pdf(path, pages='all', flavor=flavor)
+            if tables.n > 0:
+                valid_dfs = [df for df in [clean_bank_statement_df(tbl.df) for tbl in tables] if not df.empty]
+                if not valid_dfs: return None
+                if selected_columns:
+                    processed_dfs = []
+                    for df in valid_dfs:
+                        existing_cols = [col for col in selected_columns if col in df.columns]
+                        if existing_cols: processed_dfs.append(df[existing_cols])
+                    valid_dfs = processed_dfs
+                if valid_dfs:
+                    file_df = pd.concat(valid_dfs, ignore_index=True)
+                    file_df['source_file'] = os.path.basename(path)
+                    return file_df
+        except Exception as e:
+            self.signals.log.emit(f"  - 🔴 ERROR processing {os.path.basename(path)}: {e}")
+        return None
+
+    def _process_single_excel_file(self, path: str, combine_sheets: bool) -> List[pd.DataFrame]:
+        """Reads sheets from a single Excel file and returns them as a list of DataFrames."""
+        dfs = []
+        try:
+            self.signals.log.emit(f"  - Reading sheets from {os.path.basename(path)}...")
+            xls = pd.ExcelFile(path)
+            if combine_sheets:
+                file_df = pd.concat([pd.read_excel(xls, sheet_name=name) for name in xls.sheet_names], ignore_index=True)
+                file_df['source_file'] = os.path.basename(path)
+                dfs.append(file_df)
+            else:
+                for name in xls.sheet_names:
+                    sheet_df = pd.read_excel(xls, sheet_name=name)
+                    sheet_df['source_file'] = f"{os.path.basename(path)} - {name}"
+                    dfs.append(sheet_df)
+        except Exception as e:
+            self.signals.log.emit(f"  - 🔴 ERROR processing {os.path.basename(path)}: {e}")
+        return dfs
+
     def process_job(self, job: Job):
         self.signals.log.emit(f"🚀 Starting job: <b>{job.get_display_name()}</b>")
         job.status = "running"; self.db_manager.log_job_start(job); self.signals.update_job_dashboard.emit()
         temp_dir = tempfile.mkdtemp(prefix="ufu_job_")
 
         try:
-            # Handle special batch processing cases
             is_batch_job = len(job.workflow_steps) == 1 and isinstance(job.workflow_steps[0], (PdfToExcelStep, CombineFilesStep))
             
             if is_batch_job and isinstance(job.workflow_steps[0], PdfToExcelStep):
@@ -570,31 +645,24 @@ class AppWorker(QObject):
                 file_type = job.workflow_steps[0].config.get('file_type', 'Text')
                 if file_type == 'Excel': self._run_combine_excel_process(job)
                 else: self._run_combine_text_process(job)
-            else: # General workflow processing for each file
-                for i, source_file in enumerate(job.source_files):
-                    self.signals.log.emit(f"  - Processing file {i+1}/{len(job.source_files)}: {os.path.basename(source_file)}")
-                    current_file = source_file
-                    for step_idx, step in enumerate(job.workflow_steps):
-                        job.current_step_index = step_idx
-                        self.signals.log.emit(f"    - Executing step {step_idx+1}/{len(job.workflow_steps)}: <b>{step.name}</b>")
-                        job_settings = step.config.copy()
-                        job_settings['ai_processor'] = self.ai_processor
-                        output_path = step.execute(current_file, temp_dir, self.signals, job_settings)
-                        if output_path != current_file and os.path.exists(output_path): current_file = output_path
-                    # Move final result from temp to output dir, unless it was an in-place operation
-                    if os.path.dirname(current_file) == os.path.realpath(temp_dir):
-                        final_output_path = os.path.join(job.output_dir, os.path.basename(current_file))
-                        shutil.move(current_file, final_output_path)
-                        self.signals.log.emit(f"  - ✅ Finished {os.path.basename(source_file)}. Final output: {os.path.basename(final_output_path)}")
-                    else:
-                        self.signals.log.emit(f"  - ✅ Finished {os.path.basename(source_file)}. No new file created.")
-
+            else:
+                # General workflow processing for each file, now multi-threaded
+                max_workers = job.settings.get('max_threads', os.cpu_count() or 1)
+                self.signals.log.emit(f"  - Processing {len(job.source_files)} files in parallel using up to {max_workers} threads...")
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(self._process_single_file_workflow, source_file, job, temp_dir): source_file for source_file in job.source_files}
+                    for future in as_completed(futures):
+                        try:
+                            future.result()  # Re-raises exceptions from the thread
+                        except Exception as e:
+                            self.signals.log.emit(f"🔴 <font color='red'>A sub-task failed, stopping job. Error: {e}</font>")
+                            raise e # Propagate error to fail the entire job
+            
             job.status = "success"
             self.signals.log.emit(f"✅ <font color='green'>Job '{job.get_display_name()}' completed successfully.</font>")
         except Exception as e:
             job.status = "failed"; job.error_message = str(e)
-            step_name = job.workflow_steps[job.current_step_index].name
-            self.signals.log.emit(f"🔴 <font color='red'>Job '{job.get_display_name()}' failed at step '{step_name}':</font> {e}")
+            self.signals.log.emit(f"🔴 <font color='red'>Job '{job.get_display_name()}' failed:</font> {e}")
         finally:
             shutil.rmtree(temp_dir)
             self.db_manager.log_job_completion(job)
@@ -608,30 +676,13 @@ class AppWorker(QObject):
         step_config = job.workflow_steps[0].config
         flavor = step_config.get('flavor', 'stream')
         selected_columns = step_config.get('selected_columns')
-        self.signals.log.emit(f"  - Using Camelot flavor: '{flavor}'")
+        max_workers = job.settings.get('max_threads', os.cpu_count() or 1)
+        self.signals.log.emit(f"  - Using Camelot flavor: '{flavor}'. Processing {len(pdf_files)} files in parallel using up to {max_workers} threads.")
         
         all_dfs = []
-        for path in pdf_files:
-            try:
-                tables = camelot.read_pdf(path, pages='all', flavor=flavor)
-                if tables.n > 0:
-                    valid_dfs = [df for df in [clean_bank_statement_df(tbl.df) for tbl in tables] if not df.empty]
-                    if valid_dfs:
-                        # Apply column selection if specified
-                        if selected_columns:
-                            processed_dfs = []
-                            for df in valid_dfs:
-                                existing_cols = [col for col in selected_columns if col in df.columns]
-                                if existing_cols:
-                                    processed_dfs.append(df[existing_cols])
-                            valid_dfs = processed_dfs
-                        
-                        if valid_dfs:
-                            file_df = pd.concat(valid_dfs, ignore_index=True)
-                            file_df['source_file'] = os.path.basename(path)
-                            all_dfs.append(file_df)
-            except Exception as e:
-                self.signals.log.emit(f"  - ERROR processing {os.path.basename(path)}: {e}")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(lambda path: self._process_single_pdf(path, flavor, selected_columns), pdf_files)
+            all_dfs = [df for df in results if df is not None]
 
         if not all_dfs: raise RuntimeError("No data was successfully extracted from any PDF.")
         
@@ -667,21 +718,14 @@ class AppWorker(QObject):
         
         step_config = job.workflow_steps[0].config
         combine_sheets = step_config.get('combine_sheets', True)
+        max_workers = job.settings.get('max_threads', os.cpu_count() or 1)
+        self.signals.log.emit(f"  - Processing {len(excel_files)} Excel files in parallel using up to {max_workers} threads.")
+
         all_dfs = []
-        for path in excel_files:
-            try:
-                xls = pd.ExcelFile(path)
-                if combine_sheets:
-                    file_df = pd.concat([pd.read_excel(xls, sheet_name=name) for name in xls.sheet_names], ignore_index=True)
-                    file_df['source_file'] = os.path.basename(path)
-                    all_dfs.append(file_df)
-                else: # Add each sheet as a separate dataframe
-                    for name in xls.sheet_names:
-                        sheet_df = pd.read_excel(xls, sheet_name=name)
-                        sheet_df['source_file'] = f"{os.path.basename(path)} - {name}"
-                        all_dfs.append(sheet_df)
-            except Exception as e:
-                self.signals.log.emit(f"  - ERROR processing {os.path.basename(path)}: {e}")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(lambda path: self._process_single_excel_file(path, combine_sheets), excel_files)
+            for df_list in results:
+                all_dfs.extend(df_list)
 
         if not all_dfs: raise RuntimeError("No data was successfully extracted from any Excel file.")
         
@@ -724,6 +768,11 @@ class SettingsDialog(QDialog):
         super().__init__(parent); self.setWindowTitle("Global Settings"); self.setMinimumWidth(450)
         self.settings = current_settings.copy()
         layout = QFormLayout(self)
+        
+        # --- Performance Group ---
+        perf_group = QGroupBox("Performance & Resource Allocation")
+        perf_layout = QFormLayout(perf_group)
+        
         if TORCH_AVAILABLE:
             self.gpu_combo = QComboBox()
             self.gpu_combo.addItems(["Auto (Recommended)", "CPU only"])
@@ -732,13 +781,23 @@ class SettingsDialog(QDialog):
                 for i in range(torch.cuda.device_count()): self.gpu_combo.addItem(f"GPU {i}: {torch.cuda.get_device_name(i)}")
             if current_device == 'cpu': self.gpu_combo.setCurrentIndex(1)
             else: self.gpu_combo.setCurrentIndex(0)
-            layout.addRow("GPU Acceleration Device:", self.gpu_combo)
+            perf_layout.addRow("GPU Acceleration Device:", self.gpu_combo)
+        
+        cpu_count = os.cpu_count() or 1
+        self.threads_spin = QSpinBox()
+        self.threads_spin.setRange(1, cpu_count * 2) # Allow over-provisioning for I/O bound tasks
+        self.threads_spin.setSuffix(f" Threads (System has {cpu_count})")
+        self.threads_spin.setValue(self.settings.get('max_threads', cpu_count))
+        perf_layout.addRow("Max CPU Worker Threads:", self.threads_spin)
         
         self.chunk_size_spin = QSpinBox()
         self.chunk_size_spin.setRange(1, 4096); self.chunk_size_spin.setSuffix(" MB")
         self.chunk_size_spin.setValue(self.settings.get('chunk_size_mb', 64))
-        layout.addRow("Processing Chunk Size (Encryption):", self.chunk_size_spin)
+        perf_layout.addRow("Memory Usage (Chunk Size for I/O):", self.chunk_size_spin)
+        
+        layout.addRow(perf_group)
 
+        # --- Buttons ---
         button_box = QHBoxLayout(); ok_button = QPushButton("Save"); ok_button.clicked.connect(self.accept)
         cancel_button = QPushButton("Cancel"); cancel_button.clicked.connect(self.reject)
         button_box.addStretch(); button_box.addWidget(ok_button); button_box.addWidget(cancel_button); layout.addRow(button_box)
@@ -749,6 +808,7 @@ class SettingsDialog(QDialog):
             if "CPU" in sel: self.settings['gpu_device'] = "cpu"
             elif "GPU" in sel: self.settings['gpu_device'] = f"cuda:{sel.split(':')[0].split(' ')[1]}"
             else: self.settings['gpu_device'] = "auto"
+        self.settings['max_threads'] = self.threads_spin.value()
         self.settings['chunk_size_mb'] = self.chunk_size_spin.value()
         return self.settings
 
@@ -1071,8 +1131,7 @@ class SimpleModeWidget(QWidget):
                 return QMessageBox.warning(self, "Invalid Output Directory", "Please specify a valid output directory.")
         
         step: Optional[WorkflowStep] = None
-        job_settings = self.main_window.settings.copy()
-
+        
         if self.mode_conversion_rb.isChecked():
             conv_type = self.conv_type_combo.currentText()
             if conv_type.startswith("PDF"):
@@ -1097,12 +1156,12 @@ class SimpleModeWidget(QWidget):
             
             # Add custom column config if it was set
             if self.custom_column_config:
-                step.config['selected_columns'] = self.custom_column_config
+                if step: step.config['selected_columns'] = self.custom_column_config
                 self.custom_column_config = None # Reset for the next job
 
         elif self.mode_encrypt_rb.isChecked():
             step = FunEncryptStep()
-            job_settings['force_ext'] = self.encrypt_ext_edit.text()
+            step.config['force_ext'] = self.encrypt_ext_edit.text()
         elif self.mode_decrypt_rb.isChecked():
             step = FunDecryptStep()
         elif self.mode_embed_rb.isChecked():
@@ -1119,8 +1178,7 @@ class SimpleModeWidget(QWidget):
         if not step: return QMessageBox.critical(self, "Error", "Could not determine the operation to perform.")
 
         job_id = f"simple_mode_{int(time.time())}"
-        new_job = Job(job_id, source_files, [step], output_dir)
-        new_job.workflow_steps[0].config.update(job_settings) # Pass global settings to step
+        new_job = Job(job_id, source_files, [step], output_dir, settings=self.main_window.settings)
 
         self.main_window.job_queue.put(new_job)
         self.main_window.log(f"Queued job from Simple Mode: <b>{new_job.get_display_name()}</b>")
@@ -1320,7 +1378,7 @@ class MainWindow(QMainWindow):
         if not source_files or not workflow_steps:
                  return QMessageBox.warning(self, "Missing Info", "Please add files and at least one workflow step.")
         job_id = f"adv_workflow_{int(time.time())}"
-        new_job = Job(job_id, source_files, workflow_steps, self.adv_outdir_edit.text())
+        new_job = Job(job_id, source_files, workflow_steps, self.adv_outdir_edit.text(), settings=self.settings)
         self.job_queue.put(new_job)
         self.log(f"Queued advanced workflow job: <b>{new_job.get_display_name()}</b>")
         self.tabs.setCurrentIndex(2) # Switch to dashboard
@@ -1353,17 +1411,19 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "AI Initialization Failed", "Could not connect to the AI service. Please check your API key and network connection. See logs for details.")
 
     def load_settings(self):
+        cpu_count = os.cpu_count() or 1
         self.settings = {
             'outdir': self.settings_manager.value('outdir', DEFAULT_OUTDIR, type=str),
             'dark_mode': self.settings_manager.value('dark_mode', True, type=bool),
             'gpu_device': self.settings_manager.value('gpu_device', 'auto', type=str),
             'chunk_size_mb': self.settings_manager.value('chunk_size_mb', 64, type=int),
+            'max_threads': self.settings_manager.value('max_threads', cpu_count, type=int),
         }
     
     def save_settings(self):
         self.settings_manager.setValue('outdir', self.simple_mode_widget.outdir_edit.text())
         self.settings_manager.setValue('dark_mode', self.dark_mode_action.isChecked())
-        for key in ['gpu_device', 'chunk_size_mb']:
+        for key in ['gpu_device', 'chunk_size_mb', 'max_threads']:
             if key in self.settings: self.settings_manager.setValue(key, self.settings[key])
 
     def toggle_dark_mode(self, checked):
