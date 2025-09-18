@@ -1,31 +1,79 @@
 Converter-Ultimate
-Your all-in-one solution for intelligent file conversion. Built with Python, this powerful utility features a modern interface, support for a wide range of formats, and optional AI-powered features with GPU acceleration.
+Your all-in-one solution for intelligent file conversion. Built with Python, this powerful utility features a modern interface, support for a wide range of formats, and optional AI-powered features with GPU acceleration. This project is fully open-source.
 
-For General Users (The Easy Way)
-If you just want to use the application, follow these simple steps.
+Installation and Usage
+This guide provides instructions for Windows and Linux users.
 
-Download: Go to the Releases Page and download the latest Converter-Ultimate-Installer.exe.
+For Windows Users
+The recommended method for Windows is to use the runtime.py smart installer, which handles all dependencies and builds the application for you.
 
-Install: Run the downloaded file. The installer is completely plug-and-play and will set up the application, add shortcuts to your Desktop and Start Menu, and make sure all dependencies are handled.
+1. Install Python
+If you don't have Python, download and install the latest version from the official website.
 
-Launch: Use the new desktop shortcut to start converting your files!
+Go to: python.org
 
-Note: To get future updates, you will need to return to the Releases page and download the new installer.
+Important: During installation, make sure to check the box that says Add Python to PATH.
+
+2. Install the GUI Prerequisite
+The installer needs a library to display its window. Open a Command Prompt (cmd.exe) and run this command:
+
+pip install PyQt6
+
+3. Download and Run the Installer
+
+Download the runtime.py script from the Releases Page of this repository.
+
+Save it to a convenient location, like your Desktop.
+
+Open a Command Prompt in that location and run the script:
+
+python runtime.py
+
+4. Wait for Installation
+The installer window will appear and will automatically download all required libraries, build the final .exe, and create shortcuts. This may take several minutes.
+
+5. Launch the Application
+Once the installation is complete, you can find and run the application by searching for Converter-Ultimate in your Start Menu.
+
+For Linux Users
+On Linux, you will set up and run the application source code directly.
+
+1. Clone the Repository
+Open your terminal and clone the project:
+
+git clone [https://github.com/SomerandmguyintheInternet/Converter-ultimate.git](https://github.com/SomerandmguyintheInternet/Converter-ultimate.git)
+cd Converter-ultimate
+
+2. Create a Virtual Environment
+It is highly recommended to use a virtual environment.
+
+python3 -m venv .venv
+source .venv/bin/activate
+
+3. Install Dependencies
+Install all required libraries using the requirements.txt file:
+
+pip install -r requirements.txt
+
+4. Run the Application
+Launch the main application script directly:
+
+python app.py
 
 System Requirements
 To ensure a smooth experience, please review the minimum and recommended system specifications.
 
 Minimum Requirements
-Operating System: Windows 10 (64-bit)
+Operating System: Windows 10 (64-bit) or a modern Linux distribution
 
 CPU: 2 Cores / 4 Threads @ 2.5 GHz+
 
 RAM: 8 GB
 
-Notes: Internet access is required for installation.
+Notes: Internet access is required for the installer to download dependencies.
 
 Recommended Specifications
-Operating System: Windows 11 (64-bit)
+Operating System: Windows 11 (64-bit) or a modern Linux distribution
 
 CPU: 4 Cores / 8 Threads @ 3.5 GHz+ (Turbo)
 
@@ -48,29 +96,8 @@ Modern UI: A clean, intuitive, and easy-to-use interface.
 
 Self-Contained: The installer packages the final application into a single .exe with all necessary dependencies.
 
-For Developers (Build From Source)
-If you wish to build the application from the source code, follow these instructions.
-
-Clone the Repository:
-
-git clone [https://github.com/SomerandmguyintheInternet/Converter-ultimate.git](https://github.com/SomerandmguyintheInternet/Converter-ultimate.git)
-cd Converter-ultimate
-
-Create & Activate a Virtual Environment: This is crucial to avoid conflicts.
-
-python -m venv .venv
-.\.venv\Scripts\activate
-
-Install the Installer's GUI Prerequisite:
-
-pip install PyQt6
-
-Run the Installer/Builder Script: This command starts the process of installing dependencies, downloading the app.py source, building the final .exe, and creating shortcuts.
-
-python runtime.py
-
 Project Internals
-This repository uses a two-script system to create a robust and seamless user experience.
+This repository uses a two-script system to create a robust and seamless user experience on Windows.
 
 runtime.py (The Smart Installer)
 This script is the user-facing installer. Its job is not to be the application, but to build and deploy it. It handles dependency checking, downloads the latest application source, packages it into a final .exe using PyInstaller, and creates all necessary system shortcuts. It also serves as the uninstaller.
