@@ -1,106 +1,78 @@
 Converter-Ultimate
-Your all-in-one solution for intelligent file conversion. Built with Python, this powerful utility features a modern interface, support for a wide range of formats, and optional AI-powered features with GPU acceleration. This project is fully open-source.
+Your all-in-one solution for intelligent file conversion. Built with Python, this powerful utility features a modern interface, support for a wide range of formats, and optional AI-powered features with GPU acceleration.
 
-Installation and Usage
-This guide provides instructions for Windows and Linux users.
+Installation
+Choose the method that best suits your comfort level. For most users, the direct download is recommended.
 
-For Windows Users
-The recommended method for Windows is to use the runtime.py smart installer, which handles all dependencies and builds the application for you.
+Easiest Method: Direct Download (Recommended)(even a seperate option for Devs){couldnt add the .exe file here cause theres a limit of 25MB but ya know it got 54MB approx* size so)
+This is the simplest way to get started. You get a pre-packaged installer that handles everything automatically.
 
-1. Install Python
-If you don't have Python, download and install the latest version from the official website.
+Download the Installer:
+Click the link below to download the installer directly:
 
-Go to: python.org
+Download Converter-Ultimate-Installer.exe
 
-Important: During installation, make sure to check the box that says Add Python to PATH.
+Run the Installer:
+Double-click the downloaded .exe file. The installer will guide you through the process, create shortcuts, and get the application ready to use.
 
-2. Install the GUI Prerequisite
-The installer needs a library to display its window. Open a Command Prompt (cmd.exe) and run this command:
+Launch the App:
+Find "Converter-Ultimate" on your desktop or in your Start Menu.
 
-pip install PyQt6
+Alternative Method: Install via Python Script
+This method is for users who prefer to run the installer script themselves using Python.
 
-3. Download and Run the Installer
+Download the Installer Script:
+Download the runtime.py file from the main page of this repository.
 
-Download the runtime.py script from the Releases Page of this repository.
+Install Python:
+If you don't have it, install the latest version of Python from python.org. Important: During installation, make sure to check the box that says "Add Python to PATH".
 
-Save it to a convenient location, like your Desktop.
+Run the Installer:
+Double-click the runtime.py script. A welcome screen will appear.
 
-Open a Command Prompt in that location and run the script:
+Choose "Standard Installation" and click "Proceed".
 
-python runtime.py
+The script will then automatically download all necessary libraries, build the application, and create shortcuts.
 
-4. Wait for Installation
-The installer window will appear and will automatically download all required libraries, build the final .exe, and create shortcuts. This may take several minutes.
+Launch the App:
+Once complete, find "Converter-Ultimate" on your desktop or in your Start Menu.
 
-5. Launch the Application
-Once the installation is complete, you can find and run the application by searching for Converter-Ultimate in your Start Menu.
+Developer Setup
+This method is for developers who want to run the application directly from the source code for testing or modification.
 
-For Linux Users
-On Linux, you will set up and run the application source code directly.
-
-1. Clone the Repository
-Open your terminal and clone the project:
+Clone the Repository:
 
 git clone [https://github.com/SomerandmguyintheInternet/Converter-ultimate.git](https://github.com/SomerandmguyintheInternet/Converter-ultimate.git)
 cd Converter-ultimate
 
-2. Create a Virtual Environment
-It is highly recommended to use a virtual environment.
+Run the Installer in Developer Mode:
+Double-click the runtime.py script. On the welcome screen:
 
-python3 -m venv .venv
-source .venv/bin/activate
+Choose "Developer Setup" and click "Proceed".
 
-3. Install Dependencies
-Install all required libraries using the requirements.txt file:
+This will quickly download the main app.py source file into your project folder.
+
+Install Dependencies:
+A requirements.txt file is included in the repository. Install all dependencies into your environment using pip:
 
 pip install -r requirements.txt
 
-4. Run the Application
-Launch the main application script directly:
+Run the App:
+You can now run the application directly from your terminal:
 
 python app.py
 
-System Requirements
-To ensure a smooth experience, please review the minimum and recommended system specifications.
+Performance & Multithreading
+To handle demanding tasks and large batches of files efficiently, Converter-Ultimate leverages multithreading across several key functions.
 
-Minimum Requirements
-Operating System: Windows 10 (64-bit) or a modern Linux distribution
+1. General Workflow Processing (AppWorker.process_job)
+This is the main function for handling multi-step workflows from the "Advanced Mode" and most single-step jobs from the "Simple Mode" (like encryption, text extraction, etc.). If you provide multiple files for a single job, this function creates a thread pool and assigns each input file to a separate thread, allowing all files to be processed through the entire workflow concurrently. This provides a major speed boost for any batch operation.
 
-CPU: 2 Cores / 4 Threads @ 2.5 GHz+
+2. PDF to Excel Conversion (AppWorker._run_specialized_pdf_process)
+This function is specifically for the high-demand "PDF (Bank Statements) -> Excel" conversion task. Reading and analyzing tables from PDFs is very CPU-intensive. This function uses a thread pool to process each PDF file on a different CPU thread. It extracts the data from all files in parallel and then combines the results at the end, drastically reducing the total time for large batches of PDFs.
 
-RAM: 8 GB
+3. Excel File Combination (AppWorker._run_combine_excel_process)
+This function handles the "Combine All Excel Files" task. Similar to the PDF function, this one uses a thread pool to read and parse multiple Excel files at the same time. Each file is opened on a separate thread, which speeds up the process of reading all the data into memory before it gets combined into a single output file.
 
-Notes: Internet access is required for the installer to download dependencies.
-
-Recommended Specifications
-Operating System: Windows 11 (64-bit) or a modern Linux distribution
-
-CPU: 4 Cores / 8 Threads @ 3.5 GHz+ (Turbo)
-
-RAM: 16 GB
-
-Notes: A dedicated NVIDIA GPU is recommended for GPU-accelerated tasks.
-
-Application Features
-Multi-Format Conversion: Effortlessly convert between various document, image, and data formats.
-
-AI-Powered Features: (Optional) Leverage state-of-the-art AI for tasks like document summarization and analysis.
-
-GPU Acceleration: (Optional) Enable GPU support via PyTorch to dramatically speed up complex conversion and AI tasks.
-
-Modular Installation: Choose which optional features you want to install.
-
-Developer Console: (Optional) An integrated console for advanced users and debugging.
-
-Modern UI: A clean, intuitive, and easy-to-use interface.
-
-Self-Contained: The installer packages the final application into a single .exe with all necessary dependencies.
-
-Project Internals
-This repository uses a two-script system to create a robust and seamless user experience on Windows.
-
-runtime.py (The Smart Installer)
-This script is the user-facing installer. Its job is not to be the application, but to build and deploy it. It handles dependency checking, downloads the latest application source, packages it into a final .exe using PyInstaller, and creates all necessary system shortcuts. It also serves as the uninstaller.
-
-app.py (The Core Application)
-This is the actual file conversion tool. The installer downloads this file and compiles it into the final Converter-Ultimate.exe that users interact with. It contains all the UI, conversion logic, and feature integrations.
+Requirements & Limitations
+For detailed information on dependencies, system requirements, and known limitations, please see the REQUIREMENTS.md file.
